@@ -82,7 +82,7 @@
 
         // --- CONFIGURACIÓN ---
         const API_URL = 'https://script.google.com/macros/s/AKfycbz770i0j3vK5-9M2Z2EheDh9GX2x2j2KbjfFm_yNadBg5db3tEc5so58KWeIX5SwTmAZw/exec';
-        const APP_VERSION = "v3.17.0 (Payment Update)";
+        const APP_VERSION = "v3.19.0 (Preventive Filter)";
 
         const QUOTA_LABELS = {
             q1: { id: 'primera', label: 'Primera Cuota', weeksAgo: 3 },
@@ -206,7 +206,10 @@
             const [selectedSeller, setSelectedSeller] = useState('');
             const [selectedDevice, setSelectedDevice] = useState('');
             const [selectedStore, setSelectedStore] = useState(''); 
+            
+            // --- ESTADOS DE FILTROS RÁPIDOS ---
             const [showOnlyAlerts, setShowOnlyAlerts] = useState(false);
+            const [showPreventiveAlerts, setShowPreventiveAlerts] = useState(false); // NUEVO
             
             const [fpdQuotaFilter, setFpdQuotaFilter] = useState(null); 
             const [breakdownFilter, setBreakdownFilter] = useState(null);
@@ -218,12 +221,8 @@
             const [showStoreModal, setShowStoreModal] = useState(false);
             const [detailStore, setDetailStore] = useState(null);
 
-            // Modal para Editar Comentarios
             const [editModal, setEditModal] = useState({ show: false, row: null, colName: null, currentValue: '' });
-            
-            // Modal para Actualizar Pagos (NUEVO)
             const [paymentModal, setPaymentModal] = useState({ show: false, row: null });
-
             const [isSaving, setIsSaving] = useState(false);
 
             const parseDate = (dateVal) => {
@@ -245,8 +244,21 @@
                 const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
                 const due = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
                 const diffTime = today - due;
-                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+                const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)); 
                 return diffDays >= 5 && diffDays <= 7;
+            };
+
+            // NUEVA FUNCIÓN: Verifica si la fecha está en -2, -1 o 0 días
+            const checkPreventiveAlert = (dateVal) => {
+                const dateObj = parseDate(dateVal);
+                if (!dateObj) return false;
+                const now = new Date();
+                const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                const due = new Date(dateObj.getFullYear(), dateObj.getMonth(), dateObj.getDate());
+                const diffTime = today - due; // Si hoy es menor que due, diffTime es negativo.
+                const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)); 
+                // -2 (vence pasado mañana), -1 (vence mañana), 0 (vence hoy)
+                return diffDays >= -2 && diffDays <= 0;
             };
 
             const findColumnName = useCallback((keyword1, keyword2, headersList) => {
@@ -341,7 +353,10 @@
                 setSelectedStore('');
                 setFpdQuotaFilter(null);
                 setBreakdownFilter(null);
+                
+                // Resetear alertas
                 setShowOnlyAlerts(false);
+                setShowPreventiveAlerts(false);
 
                 try {
                     const separator = API_URL.includes('?') ? '&' : '?';
@@ -392,6 +407,7 @@
                 };
             }, [data, headers, activeConfig, findConfigColumn]);
 
+            // ... (Report Data memos: sellerReportData, storeReportData, sellerDetailData, storeDetailData) ...
             const sellerReportData = useMemo(() => {
                 if (!showSellerModal || !sellerColumn) return [];
                 const dateCol = findConfigColumn(activeConfig.columns.date, headers);
@@ -574,103 +590,46 @@
                 });
             }, [detailStore, reportFilter, data, headers, activeConfig, findColumnName, findConfigColumn, portfolio, storeColumn]);
 
-            const handleExportPDF = () => {
+            // Funciones Export PDF
+            const handleExportPDF = () => { /* ... existing export seller ... */
                 const { jsPDF } = window.jspdf;
                 const doc = new jsPDF();
                 const tableColumn = ["Vendedor", "Total", "Pagas", "Gestión", "No Canc.", "Por Vencer", "Sin Dato", "Mora %"];
                 const tableRows = [];
-                sellerReportData.forEach(row => {
-                    tableRows.push([row.name, row.total, row.pagas, row.gestion, row.noCancelo, row.porVencer, row.vacio, `${row.index}%`]);
-                });
-                doc.setFontSize(16);
-                doc.text(`Reporte de Vendedores - ${portfolio.toUpperCase()}`, 14, 15);
-                doc.setFontSize(10);
-                const filterName = reportFilter === 'fpd7' ? 'FPD7 (3 Semanas)' : reportFilter === 'current' ? 'Este Mes' : reportFilter === 'last' ? 'Mes Pasado' : 'Toda la Cartera';
-                doc.text(`Filtro Aplicado: ${filterName}`, 14, 22);
-                doc.text(`Generado: ${new Date().toLocaleString()}`, 14, 28);
-                doc.autoTable({
-                    head: [tableColumn], body: tableRows, startY: 35, theme: 'grid',
-                    headStyles: { fillColor: [79, 70, 229] }, styles: { fontSize: 8 },
-                    alternateRowStyles: { fillColor: [245, 247, 255] }
-                });
+                sellerReportData.forEach(row => { tableRows.push([row.name, row.total, row.pagas, row.gestion, row.noCancelo, row.porVencer, row.vacio, `${row.index}%`]); });
+                doc.setFontSize(16); doc.text(`Reporte de Vendedores - ${portfolio.toUpperCase()}`, 14, 15);
+                doc.setFontSize(10); doc.text(`Filtro Aplicado: ${reportFilter}`, 14, 22); doc.text(`Generado: ${new Date().toLocaleString()}`, 14, 28);
+                doc.autoTable({ head: [tableColumn], body: tableRows, startY: 35, theme: 'grid', headStyles: { fillColor: [79, 70, 229] }, styles: { fontSize: 8 }, alternateRowStyles: { fillColor: [245, 247, 255] } });
                 doc.save(`Reporte_Vendedores_${portfolio}_${new Date().toISOString().slice(0,10)}.pdf`);
             };
 
-            const handleExportStorePDF = () => {
+            const handleExportStorePDF = () => { /* ... existing export store ... */
                 const { jsPDF } = window.jspdf;
                 const doc = new jsPDF();
                 const tableColumn = ["Tienda", "Total", "Pagas", "Gestión", "No Canc.", "Por Vencer", "Sin Dato", "Mora %"];
                 const tableRows = [];
-                storeReportData.forEach(row => {
-                    tableRows.push([row.name, row.total, row.pagas, row.gestion, row.noCancelo, row.porVencer, row.vacio, `${row.index}%`]);
-                });
-                doc.setFontSize(16);
-                doc.text(`Reporte de Tiendas - ${portfolio.toUpperCase()}`, 14, 15);
-                doc.setFontSize(10);
-                const filterName = reportFilter === 'fpd7' ? 'FPD7 (3 Semanas)' : reportFilter === 'current' ? 'Este Mes' : reportFilter === 'last' ? 'Mes Pasado' : 'Toda la Cartera';
-                doc.text(`Filtro Aplicado: ${filterName}`, 14, 22);
-                doc.text(`Generado: ${new Date().toLocaleString()}`, 14, 28);
-                doc.autoTable({
-                    head: [tableColumn], body: tableRows, startY: 35, theme: 'grid',
-                    headStyles: { fillColor: [79, 70, 229] }, styles: { fontSize: 8 },
-                    alternateRowStyles: { fillColor: [245, 247, 255] }
-                });
+                storeReportData.forEach(row => { tableRows.push([row.name, row.total, row.pagas, row.gestion, row.noCancelo, row.porVencer, row.vacio, `${row.index}%`]); });
+                doc.setFontSize(16); doc.text(`Reporte de Tiendas - ${portfolio.toUpperCase()}`, 14, 15);
+                doc.setFontSize(10); doc.text(`Filtro Aplicado: ${reportFilter}`, 14, 22); doc.text(`Generado: ${new Date().toLocaleString()}`, 14, 28);
+                doc.autoTable({ head: [tableColumn], body: tableRows, startY: 35, theme: 'grid', headStyles: { fillColor: [79, 70, 229] }, styles: { fontSize: 8 }, alternateRowStyles: { fillColor: [245, 247, 255] } });
                 doc.save(`Reporte_Tiendas_${portfolio}_${new Date().toISOString().slice(0,10)}.pdf`);
             };
 
-            const handleExportDetailPDF = () => {
-                const { jsPDF } = window.jspdf;
-                const doc = new jsPDF();
-                const tableColumn = ["Cliente", "Cédula", "Celular", "Equipo", "Vencimiento", "Estado"];
-                const tableRows = [];
-                sellerDetailData.forEach(row => {
-                    tableRows.push([row.name, row.id, row.phone, row.device, row.dueDate, row.status]);
-                });
-                doc.setFontSize(16);
-                doc.text(`Detalle de Clientes - ${detailSeller}`, 14, 15);
-                doc.setFontSize(10);
-                doc.text(`Cartera: ${portfolio.toUpperCase()} | Fecha: ${new Date().toLocaleDateString()}`, 14, 22);
-                doc.autoTable({
-                    head: [tableColumn], body: tableRows, startY: 30, theme: 'grid',
-                    headStyles: { fillColor: [63, 81, 181] }, styles: { fontSize: 8 },
-                    didParseCell: function(data) {
-                        if (data.section === 'body' && data.column.index === 5) {
-                            const val = data.cell.raw;
-                            if (val === 'Mora') data.cell.styles.textColor = [220, 38, 38]; 
-                            else if (val === 'Pagó') data.cell.styles.textColor = [22, 163, 74]; 
-                            else if (val === 'Gestión') data.cell.styles.textColor = [37, 99, 235]; 
-                            else if (val === 'Por Vencer') data.cell.styles.textColor = [217, 119, 6]; 
-                        }
-                    }
-                });
+            const handleExportDetailPDF = () => { /* ... existing export detail ... */
+                const { jsPDF } = window.jspdf; const doc = new jsPDF();
+                const tableColumn = ["Cliente", "Cédula", "Celular", "Equipo", "Vencimiento", "Estado"]; const tableRows = [];
+                sellerDetailData.forEach(row => { tableRows.push([row.name, row.id, row.phone, row.device, row.dueDate, row.status]); });
+                doc.setFontSize(16); doc.text(`Detalle de Clientes - ${detailSeller}`, 14, 15); doc.setFontSize(10); doc.text(`Cartera: ${portfolio.toUpperCase()} | Fecha: ${new Date().toLocaleDateString()}`, 14, 22);
+                doc.autoTable({ head: [tableColumn], body: tableRows, startY: 30, theme: 'grid', headStyles: { fillColor: [63, 81, 181] }, styles: { fontSize: 8 }});
                 doc.save(`Detalle_${detailSeller}_${portfolio}.pdf`);
             };
 
-            const handleExportStoreDetailPDF = () => {
-                const { jsPDF } = window.jspdf;
-                const doc = new jsPDF();
-                const tableColumn = ["Cliente", "Cédula", "Celular", "Equipo", "Vencimiento", "Estado"];
-                const tableRows = [];
-                storeDetailData.forEach(row => {
-                    tableRows.push([row.name, row.id, row.phone, row.device, row.dueDate, row.status]);
-                });
-                doc.setFontSize(16);
-                doc.text(`Detalle de Tienda - ${detailStore}`, 14, 15);
-                doc.setFontSize(10);
-                doc.text(`Cartera: ${portfolio.toUpperCase()} | Fecha: ${new Date().toLocaleDateString()}`, 14, 22);
-                doc.autoTable({
-                    head: [tableColumn], body: tableRows, startY: 30, theme: 'grid',
-                    headStyles: { fillColor: [63, 81, 181] }, styles: { fontSize: 8 },
-                    didParseCell: function(data) {
-                        if (data.section === 'body' && data.column.index === 5) {
-                            const val = data.cell.raw;
-                            if (val === 'Mora') data.cell.styles.textColor = [220, 38, 38]; 
-                            else if (val === 'Pagó') data.cell.styles.textColor = [22, 163, 74]; 
-                            else if (val === 'Gestión') data.cell.styles.textColor = [37, 99, 235]; 
-                            else if (val === 'Por Vencer') data.cell.styles.textColor = [217, 119, 6]; 
-                        }
-                    }
-                });
+            const handleExportStoreDetailPDF = () => { /* ... existing export detail ... */
+                const { jsPDF } = window.jspdf; const doc = new jsPDF();
+                const tableColumn = ["Cliente", "Cédula", "Celular", "Equipo", "Vencimiento", "Estado"]; const tableRows = [];
+                storeDetailData.forEach(row => { tableRows.push([row.name, row.id, row.phone, row.device, row.dueDate, row.status]); });
+                doc.setFontSize(16); doc.text(`Detalle de Tienda - ${detailStore}`, 14, 15); doc.setFontSize(10); doc.text(`Cartera: ${portfolio.toUpperCase()} | Fecha: ${new Date().toLocaleDateString()}`, 14, 22);
+                doc.autoTable({ head: [tableColumn], body: tableRows, startY: 30, theme: 'grid', headStyles: { fillColor: [63, 81, 181] }, styles: { fontSize: 8 }});
                 doc.save(`Detalle_Tienda_${detailStore}_${portfolio}.pdf`);
             };
 
@@ -681,10 +640,7 @@
                 const payload = { type: portfolio, phone: phone, comment: editModal.currentValue, column: editModal.colName, append: true };
                 try {
                     const response = await fetch(API_URL, {
-                        method: 'POST',
-                        mode: 'no-cors',
-                        headers: { 'Content-Type': 'text/plain' },
-                        body: JSON.stringify(payload)
+                        method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload)
                     });
                     const newData = data.map(r => {
                          if (String(r[phoneColumn]).replace(/\D/g, '') === String(phone).replace(/\D/g, '')) {
@@ -700,13 +656,10 @@
                 } catch (e) { alert("Error al guardar: " + e.message); } finally { setIsSaving(false); }
             };
 
-            // --- NUEVA LÓGICA: GUARDAR ESTADO DE PAGO ---
             const handleSavePaymentStatus = async (newStatus) => {
                 if (!paymentModal.row) return;
                 setIsSaving(true);
                 const phone = paymentModal.row[phoneColumn];
-                
-                // Encontrar la columna de pagos dinámicamente
                 const paymentColName = findConfigColumn(activeConfig.columns.paymentStatus, headers) || findColumnName('Pagos', 'Estado', headers);
 
                 if (!paymentColName) {
@@ -715,36 +668,27 @@
                     return;
                 }
 
-                // Append: false para que sobreescriba (o se añada como nueva entrada principal), pero el backend ya pone la fecha.
                 const payload = { type: portfolio, phone: phone, comment: newStatus, column: paymentColName, append: false };
-                
                 try {
                     const response = await fetch(API_URL, {
-                        method: 'POST',
-                        mode: 'no-cors',
-                        headers: { 'Content-Type': 'text/plain' },
-                        body: JSON.stringify(payload)
+                        method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload)
                     });
 
-                    // Actualización optimista del UI
                     const newData = data.map(r => {
                          if (String(r[phoneColumn]).replace(/\D/g, '') === String(phone).replace(/\D/g, '')) {
                              const dateStr = new Date().toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' });
-                             // El backend pondrá [Fecha] Status. Simulamos esto aquí para feedback inmediato.
                              return { ...r, [paymentColName]: `[${dateStr}] ${newStatus}` };
                          }
                          return r;
                     });
                     setData(newData);
-                    setPaymentModal({ show: false, row: null }); // Cerrar modal
-
+                    setPaymentModal({ show: false, row: null });
                 } catch (e) { 
                     alert("Error al actualizar pago: " + e.message); 
                 } finally { 
                     setIsSaving(false); 
                 }
             };
-
 
             const checkSpecificQuotaAlert = (row, headersList, quotaId) => {
                 const qName = QUOTA_LABELS[quotaId]?.id; 
@@ -764,6 +708,23 @@
                 return activeConfig.quotas.some(qId => checkSpecificQuotaAlert(row, headersList, qId));
             };
 
+            // NUEVA FUNCIÓN: Obtiene el estado preventivo de la fila entera
+            const getRowPreventiveStatus = (row, headersList) => {
+                return activeConfig.quotas.some(qId => {
+                    const qName = QUOTA_LABELS[qId]?.id; 
+                    if (!qName) return false;
+                    const colFecha = findColumnName(qName, activeConfig.columns.quotaDate, headersList);
+                    let colStatus = findColumnName(activeConfig.columns.paymentStatus, qName, headersList);
+                    if (!colStatus) colStatus = findColumnName(activeConfig.columns.paymentStatus, '', headersList);
+                    if (colFecha && colStatus) {
+                        const fechaVal = row[colFecha];
+                        const obsVal = String(row[colStatus] || '').trim();
+                        if (checkPreventiveAlert(fechaVal) && isObsUnpaid(obsVal)) return true;
+                    }
+                    return false;
+                });
+            };
+
             const filteredData = useMemo(() => {
                 let result = data;
                 if (selectedSeller && sellerColumn) result = result.filter(row => String(row[sellerColumn]).trim() === selectedSeller);
@@ -771,7 +732,10 @@
                 if (selectedStore && storeColumn) result = result.filter(row => String(row[storeColumn]).trim() === selectedStore); 
                 
                 if (searchTerm) result = result.filter(row => headers.some(header => String(row[header]).toLowerCase().includes(searchTerm.toLowerCase())));
+                
+                // Aplicar filtros de Alertas exclusivos
                 if (showOnlyAlerts) result = result.filter(row => getRowAlertStatus(row, headers));
+                if (showPreventiveAlerts) result = result.filter(row => getRowPreventiveStatus(row, headers));
 
                 if (fpdQuotaFilter) {
                     const dateCol = findConfigColumn(activeConfig.columns.date, headers);
@@ -789,7 +753,7 @@
                     }
                 }
                 return result;
-            }, [data, headers, searchTerm, showOnlyAlerts, fpdQuotaFilter, breakdownFilter, selectedSeller, sellerColumn, selectedDevice, deviceColumn, selectedStore, storeColumn, activeConfig, findColumnName, findConfigColumn, portfolio]);
+            }, [data, headers, searchTerm, showOnlyAlerts, showPreventiveAlerts, fpdQuotaFilter, breakdownFilter, selectedSeller, sellerColumn, selectedDevice, deviceColumn, selectedStore, storeColumn, activeConfig, findColumnName, findConfigColumn, portfolio]);
 
             const dataForStats = useMemo(() => {
                 let result = data;
@@ -802,6 +766,13 @@
             const alertStats = useMemo(() => {
                 let stats = { total: 0 };
                 dataForStats.forEach(row => { if (getRowAlertStatus(row, headers)) stats.total++; });
+                return stats;
+            }, [dataForStats, headers, activeConfig]);
+
+            // NUEVO: Métricas preventivas
+            const preventiveStats = useMemo(() => {
+                let stats = { total: 0 };
+                dataForStats.forEach(row => { if (getRowPreventiveStatus(row, headers)) stats.total++; });
                 return stats;
             }, [dataForStats, headers, activeConfig]);
 
@@ -892,7 +863,7 @@
                              <Icons.FileText className="w-4 h-4 text-slate-600" />
                              <h3 className="text-sm font-bold uppercase tracking-wide text-slate-700">{title}</h3>
                         </div>
-                        <div onClick={() => { if(hasSales) { setFpdQuotaFilter(isFpdActive ? null : quotaId); setBreakdownFilter(null); setShowOnlyAlerts(false); }}} className={`mb-3 p-3 rounded-lg ${fpdColor} border border-white/50 shadow-sm transition-all ${hasSales ? 'cursor-pointer hover:ring-2 hover:ring-indigo-400' : ''} ${isFpdActive ? 'ring-2 ring-indigo-500' : ''}`}>
+                        <div onClick={() => { if(hasSales) { setFpdQuotaFilter(isFpdActive ? null : quotaId); setBreakdownFilter(null); setShowOnlyAlerts(false); setShowPreventiveAlerts(false); }}} className={`mb-3 p-3 rounded-lg ${fpdColor} border border-white/50 shadow-sm transition-all ${hasSales ? 'cursor-pointer hover:ring-2 hover:ring-indigo-400' : ''} ${isFpdActive ? 'ring-2 ring-indigo-500' : ''}`}>
                             <div className="flex justify-between mb-2">
                                 <span className="text-[10px] font-bold uppercase opacity-80 flex items-center gap-1">{isFpdActive && <Icons.Filter className="w-3 h-3 animate-pulse"/>} FPD7 (Sem -{QUOTA_LABELS[quotaId].weeksAgo})</span>
                                 <span className="text-xl font-bold">{hasSales ? `${fpdPercent}%` : 'N/A'}</span>
@@ -915,10 +886,10 @@
                             ) : <span className="text-[10px] opacity-70">Sin ventas en {fpdInfo ? fpdInfo.rangeStr : 'periodo'}</span>}
                         </div>
                         <div className="space-y-1">
-                             <div onClick={() => { setBreakdownFilter({quota: quotaId, type: 'yaCancelo'}); setFpdQuotaFilter(null); }} className={`${baseRow} ${isActive('yaCancelo') ? 'bg-green-100 ring-2 ring-green-500' : 'bg-slate-50'}`}><span className="text-xs font-bold text-green-700 flex gap-1"><Icons.DollarSign className="w-3 h-3"/> Ya Canceló</span><span className="font-bold">{stats.yaCancelo}</span></div>
-                             <div onClick={() => { setBreakdownFilter({quota: quotaId, type: 'conGestion'}); setFpdQuotaFilter(null); }} className={`${baseRow} ${isActive('conGestion') ? 'bg-blue-100 ring-2 ring-blue-500' : 'bg-slate-50'}`}><span className="text-xs font-bold text-blue-700 flex gap-1"><Icons.Handshake className="w-3 h-3"/> Con Gestión</span><span className="font-bold">{stats.conGestion}</span></div>
-                             <div onClick={() => { setBreakdownFilter({quota: quotaId, type: 'noCancelo'}); setFpdQuotaFilter(null); }} className={`${baseRow} ${isActive('noCancelo') ? 'bg-red-100 ring-2 ring-red-500' : 'bg-slate-50'}`}><span className="text-xs font-bold text-red-600 flex gap-1"><Icons.XCircle className="w-3 h-3"/> No Canceló</span><span className="font-bold">{stats.noCancelo}</span></div>
-                             <div onClick={() => { setBreakdownFilter({quota: quotaId, type: 'vacio'}); setFpdQuotaFilter(null); }} className={`${baseRow} ${isActive('vacio') ? 'bg-slate-200 ring-2 ring-slate-500' : 'bg-slate-50'}`}><span className="text-xs font-bold text-slate-500 flex gap-1"><Icons.HelpCircle className="w-3 h-3"/> Sin dato</span><span className="font-bold">{stats.vacio}</span></div>
+                             <div onClick={() => { setBreakdownFilter({quota: quotaId, type: 'yaCancelo'}); setFpdQuotaFilter(null); setShowOnlyAlerts(false); setShowPreventiveAlerts(false);}} className={`${baseRow} ${isActive('yaCancelo') ? 'bg-green-100 ring-2 ring-green-500' : 'bg-slate-50'}`}><span className="text-xs font-bold text-green-700 flex gap-1"><Icons.DollarSign className="w-3 h-3"/> Ya Canceló</span><span className="font-bold">{stats.yaCancelo}</span></div>
+                             <div onClick={() => { setBreakdownFilter({quota: quotaId, type: 'conGestion'}); setFpdQuotaFilter(null); setShowOnlyAlerts(false); setShowPreventiveAlerts(false);}} className={`${baseRow} ${isActive('conGestion') ? 'bg-blue-100 ring-2 ring-blue-500' : 'bg-slate-50'}`}><span className="text-xs font-bold text-blue-700 flex gap-1"><Icons.Handshake className="w-3 h-3"/> Con Gestión</span><span className="font-bold">{stats.conGestion}</span></div>
+                             <div onClick={() => { setBreakdownFilter({quota: quotaId, type: 'noCancelo'}); setFpdQuotaFilter(null); setShowOnlyAlerts(false); setShowPreventiveAlerts(false);}} className={`${baseRow} ${isActive('noCancelo') ? 'bg-red-100 ring-2 ring-red-500' : 'bg-slate-50'}`}><span className="text-xs font-bold text-red-600 flex gap-1"><Icons.XCircle className="w-3 h-3"/> No Canceló</span><span className="font-bold">{stats.noCancelo}</span></div>
+                             <div onClick={() => { setBreakdownFilter({quota: quotaId, type: 'vacio'}); setFpdQuotaFilter(null); setShowOnlyAlerts(false); setShowPreventiveAlerts(false);}} className={`${baseRow} ${isActive('vacio') ? 'bg-slate-200 ring-2 ring-slate-500' : 'bg-slate-50'}`}><span className="text-xs font-bold text-slate-500 flex gap-1"><Icons.HelpCircle className="w-3 h-3"/> Sin dato</span><span className="font-bold">{stats.vacio}</span></div>
                         </div>
                     </div>
                 );
@@ -1002,13 +973,49 @@
                         </div>
                     </div>
 
-                    {alertStats.total > 0 && (
-                        <div className="bg-rose-50 border border-rose-100 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-center gap-4">
-                             <div className="flex gap-4 items-center">
-                                <div className="p-2.5 bg-white shadow-sm border border-rose-100 rounded-full text-rose-600"><Icons.BellRing className="w-5 h-5"/></div>
-                                <div><h2 className="text-rose-900 font-bold">{alertStats.total} Clientes en Mora Reciente</h2><p className="text-xs text-rose-700 opacity-80">Vencidos hace 5-7 días sin gestión registrada.</p></div>
-                             </div>
-                             <button onClick={() => setShowOnlyAlerts(!showOnlyAlerts)} className={`px-5 py-2 rounded-lg text-sm font-bold border transition-all shadow-sm ${showOnlyAlerts ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-rose-600 border-rose-200 hover:bg-rose-50'}`}>{showOnlyAlerts ? 'Ver Todos' : 'Filtrar Alertas'}</button>
+                    {/* SECCIÓN DE ALERTAS (MORA Y PREVENTIVAS) */}
+                    {(alertStats.total > 0 || preventiveStats.total > 0) && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            
+                            {/* ALERTA DE MORA RECIENTE (ROJO) */}
+                            {alertStats.total > 0 && (
+                                <div className="bg-rose-50 border border-rose-100 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+                                     <div className="flex gap-4 items-center">
+                                        <div className="p-2.5 bg-white shadow-sm border border-rose-100 rounded-full text-rose-600"><Icons.BellRing className="w-5 h-5"/></div>
+                                        <div><h2 className="text-rose-900 font-bold">{alertStats.total} Clientes en Mora Reciente</h2><p className="text-xs text-rose-700 opacity-80">Vencidos hace 5-7 días sin gestión.</p></div>
+                                     </div>
+                                     <button 
+                                        onClick={() => { 
+                                            const newVal = !showOnlyAlerts; 
+                                            setShowOnlyAlerts(newVal); 
+                                            if(newVal) setShowPreventiveAlerts(false); 
+                                        }} 
+                                        className={`px-4 py-2 rounded-lg text-sm font-bold border transition-all shadow-sm whitespace-nowrap ${showOnlyAlerts ? 'bg-rose-600 text-white border-rose-600' : 'bg-white text-rose-600 border-rose-200 hover:bg-rose-50'}`}
+                                     >
+                                        {showOnlyAlerts ? 'Quitar Filtro' : 'Filtrar Mora'}
+                                     </button>
+                                </div>
+                            )}
+
+                            {/* ALERTA PREVENTIVA (AMARILLO) */}
+                            {preventiveStats.total > 0 && (
+                                <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+                                     <div className="flex gap-4 items-center">
+                                        <div className="p-2.5 bg-white shadow-sm border border-amber-100 rounded-full text-amber-600"><Icons.Clock className="w-5 h-5"/></div>
+                                        <div><h2 className="text-amber-900 font-bold">{preventiveStats.total} Gestión Preventiva</h2><p className="text-xs text-amber-700 opacity-80">Vencen hoy o en 1-2 días (-2, -1, 0).</p></div>
+                                     </div>
+                                     <button 
+                                        onClick={() => { 
+                                            const newVal = !showPreventiveAlerts; 
+                                            setShowPreventiveAlerts(newVal); 
+                                            if(newVal) setShowOnlyAlerts(false); 
+                                        }} 
+                                        className={`px-4 py-2 rounded-lg text-sm font-bold border transition-all shadow-sm whitespace-nowrap ${showPreventiveAlerts ? 'bg-amber-600 text-white border-amber-600' : 'bg-white text-amber-600 border-amber-200 hover:bg-amber-50'}`}
+                                     >
+                                        {showPreventiveAlerts ? 'Quitar Filtro' : 'Filtrar Preventiva'}
+                                     </button>
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -1044,12 +1051,23 @@
                                             {headers.map((h, j) => {
                                                 const val = formatCellData(row[h]);
                                                 const style = getColumnStyles(h);
+                                                
                                                 let isAlert = false;
+                                                let isPreventive = false;
+
                                                 if (style) {
                                                     let qName = ''; if (h.toLowerCase().includes('primera')) qName='primera';
-                                                    if(qName && activeConfig.quotas.some(qId => QUOTA_LABELS[qId].id === qName) && checkSpecificQuotaAlert(row, headers, 'fpd3')) isAlert = true; 
+                                                    if(qName && activeConfig.quotas.some(qId => QUOTA_LABELS[qId].id === qName)) {
+                                                        if (checkSpecificQuotaAlert(row, headers, 'fpd3')) {
+                                                            isAlert = true; 
+                                                        } else if (getRowPreventiveStatus(row, headers)) {
+                                                            isPreventive = true;
+                                                        }
+                                                    }
                                                 }
+                                                
                                                 const isPhoneCol = activeConfig.columns.phone && activeConfig.columns.phone.some(p => h.toLowerCase().includes(p));
+                                                
                                                 if (isPhoneCol) {
                                                     const clientVal = clientColumn ? row[clientColumn] : '';
                                                     const deviceVal = deviceColumn ? row[deviceColumn] : '';
@@ -1067,9 +1085,26 @@
                                                         </td>
                                                     );
                                                 }
+                                                
                                                 const isCommentsCol = activeConfig.columns.comments && ((typeof activeConfig.columns.comments === 'string' && h.toLowerCase().includes(activeConfig.columns.comments)) || (Array.isArray(activeConfig.columns.comments) && activeConfig.columns.comments.some(n => h.toLowerCase().includes(n))));
-                                                if (isCommentsCol) return (<td key={j} className={`px-4 py-3 whitespace-nowrap text-xs group relative ${style?.bgColor} ${isAlert ? 'bg-rose-50 text-rose-700 font-bold border-l-2 border-rose-500' : ''}`}>{isAlert && <Icons.AlertTriangle className="w-3 h-3 inline mr-1.5"/>}<span className="inline-block max-w-[200px] truncate" title={val}>{val}</span><button onClick={() => setEditModal({ show: true, row, colName: h, currentValue: String(row[h] || '') })} className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 bg-white shadow-sm border border-slate-200 rounded text-slate-400 hover:text-indigo-600 hover:border-indigo-300 transition-all z-10 opacity-100" title="Agregar gestión"><Icons.Edit2 className="w-3 h-3"/></button></td>)
-                                                return (<td key={j} className={`px-4 py-3 whitespace-nowrap text-xs ${style?.bgColor} ${isAlert ? 'bg-rose-50 text-rose-700 font-bold border-l-2 border-rose-500' : ''}`}>{isAlert && <Icons.AlertTriangle className="w-3 h-3 inline mr-1.5"/>}{val}</td>)
+                                                const alertClasses = isAlert ? 'bg-rose-50 text-rose-700 font-bold border-l-2 border-rose-500' : isPreventive ? 'bg-amber-50 text-amber-700 font-bold border-l-2 border-amber-500' : '';
+
+                                                if (isCommentsCol) return (
+                                                    <td key={j} className={`px-4 py-3 whitespace-nowrap text-xs group relative ${style?.bgColor} ${alertClasses}`}>
+                                                        {isAlert && <Icons.AlertTriangle className="w-3 h-3 inline mr-1.5"/>}
+                                                        {isPreventive && <Icons.Clock className="w-3 h-3 inline mr-1.5"/>}
+                                                        <span className="inline-block max-w-[200px] truncate" title={val}>{val}</span>
+                                                        <button onClick={() => setEditModal({ show: true, row, colName: h, currentValue: String(row[h] || '') })} className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 bg-white shadow-sm border border-slate-200 rounded text-slate-400 hover:text-indigo-600 hover:border-indigo-300 transition-all z-10 opacity-100" title="Agregar gestión"><Icons.Edit2 className="w-3 h-3"/></button>
+                                                    </td>
+                                                );
+
+                                                return (
+                                                    <td key={j} className={`px-4 py-3 whitespace-nowrap text-xs ${style?.bgColor} ${alertClasses}`}>
+                                                        {isAlert && <Icons.AlertTriangle className="w-3 h-3 inline mr-1.5"/>}
+                                                        {isPreventive && <Icons.Clock className="w-3 h-3 inline mr-1.5"/>}
+                                                        {val}
+                                                    </td>
+                                                );
                                             })}
                                         </tr>
                                     )) : (<tr><td colSpan={headers.length} className="px-6 py-24 text-center text-slate-400"><div className="flex flex-col items-center gap-3"><div className="p-4 bg-slate-50 rounded-full"><Icons.Search className="w-8 h-8 text-slate-300"/></div><p>No se encontraron resultados con los filtros actuales.</p></div></td></tr>)}
@@ -1088,7 +1123,6 @@
                         </div>
                     )}
 
-                    {/* MODAL DE ACTUALIZACIÓN DE PAGO (NUEVO) */}
                     {paymentModal.show && (
                         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">
                              <div className="bg-white w-full max-w-md rounded-xl shadow-2xl overflow-hidden flex flex-col transform transition-all scale-100">
@@ -1099,20 +1133,38 @@
                                     </h3>
                                     <button onClick={() => !isSaving && setPaymentModal({ show: false, row: null })} className="text-slate-400 hover:text-slate-600 transition-colors"><Icons.X className="w-5 h-5"/></button>
                                 </div>
-                                <div className="p-6 space-y-3">
-                                    <p className="text-sm text-slate-500 mb-2">Seleccione el nuevo estado para el cliente:</p>
-                                    <button onClick={() => handleSavePaymentStatus("CANCELO SIN FECHA")} disabled={isSaving} className="w-full p-4 bg-emerald-50 border border-emerald-100 rounded-xl hover:bg-emerald-100 hover:border-emerald-200 transition-all flex items-center justify-between group">
-                                        <span className="font-bold text-emerald-700">CANCELO SIN FECHA</span>
+                                <div className="p-6 space-y-2 overflow-y-auto max-h-[70vh] custom-scrollbar">
+                                    <p className="text-sm text-slate-500 mb-2">Estados Principales:</p>
+                                    <button onClick={() => handleSavePaymentStatus("CANCELO SIN FECHA")} disabled={isSaving} className="w-full p-3 bg-emerald-50 border border-emerald-100 rounded-xl hover:bg-emerald-100 hover:border-emerald-200 transition-all flex items-center justify-between group">
+                                        <span className="font-bold text-emerald-700 text-sm">CANCELO SIN FECHA</span>
                                         <Icons.CheckCircle className="w-5 h-5 text-emerald-400 group-hover:text-emerald-600"/>
                                     </button>
-                                    <button onClick={() => handleSavePaymentStatus("EN MORA")} disabled={isSaving} className="w-full p-4 bg-rose-50 border border-rose-100 rounded-xl hover:bg-rose-100 hover:border-rose-200 transition-all flex items-center justify-between group">
-                                        <span className="font-bold text-rose-700">EN MORA</span>
+                                    <button onClick={() => handleSavePaymentStatus("EN MORA")} disabled={isSaving} className="w-full p-3 bg-rose-50 border border-rose-100 rounded-xl hover:bg-rose-100 hover:border-rose-200 transition-all flex items-center justify-between group">
+                                        <span className="font-bold text-rose-700 text-sm">EN MORA</span>
                                         <Icons.XCircle className="w-5 h-5 text-rose-400 group-hover:text-rose-600"/>
                                     </button>
-                                    <button onClick={() => handleSavePaymentStatus("PAGO GETS")} disabled={isSaving} className="w-full p-4 bg-blue-50 border border-blue-100 rounded-xl hover:bg-blue-100 hover:border-blue-200 transition-all flex items-center justify-between group">
-                                        <span className="font-bold text-blue-700">PAGO GETS</span>
+                                    <button onClick={() => handleSavePaymentStatus("PAGO GETS")} disabled={isSaving} className="w-full p-3 bg-blue-50 border border-blue-100 rounded-xl hover:bg-blue-100 hover:border-blue-200 transition-all flex items-center justify-between group">
+                                        <span className="font-bold text-blue-700 text-sm">PAGO GETS</span>
                                         <Icons.Handshake className="w-5 h-5 text-blue-400 group-hover:text-blue-600"/>
                                     </button>
+
+                                    <div className="mt-4 pt-4 border-t border-slate-100">
+                                        <p className="text-sm text-slate-500 mb-3">Gestión Preventiva:</p>
+                                        <div className="space-y-2">
+                                            <button onClick={() => handleSavePaymentStatus("GESTIÓN PREVENTIVA -2")} disabled={isSaving} className="w-full p-3 bg-violet-50 border border-violet-100 rounded-xl hover:bg-violet-100 hover:border-violet-200 transition-all flex items-center justify-between group">
+                                                <span className="font-bold text-violet-700 text-sm">GESTIÓN PREVENTIVA -2</span>
+                                                <Icons.Clock className="w-5 h-5 text-violet-400 group-hover:text-violet-600"/>
+                                            </button>
+                                            <button onClick={() => handleSavePaymentStatus("GESTIÓN PREVENTIVA -1")} disabled={isSaving} className="w-full p-3 bg-violet-50 border border-violet-100 rounded-xl hover:bg-violet-100 hover:border-violet-200 transition-all flex items-center justify-between group">
+                                                <span className="font-bold text-violet-700 text-sm">GESTIÓN PREVENTIVA -1</span>
+                                                <Icons.Clock className="w-5 h-5 text-violet-400 group-hover:text-violet-600"/>
+                                            </button>
+                                            <button onClick={() => handleSavePaymentStatus("GESTIÓN HOY")} disabled={isSaving} className="w-full p-3 bg-violet-50 border border-violet-100 rounded-xl hover:bg-violet-100 hover:border-violet-200 transition-all flex items-center justify-between group">
+                                                <span className="font-bold text-violet-700 text-sm">GESTIÓN HOY</span>
+                                                <Icons.Clock className="w-5 h-5 text-violet-400 group-hover:text-violet-600"/>
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
                                 {isSaving && <div className="p-3 bg-slate-50 text-center text-xs text-slate-500 italic border-t border-slate-100">Guardando cambios...</div>}
                              </div>
